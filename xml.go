@@ -5,13 +5,17 @@ import "fmt"
 // You may think that you want to rewrite to proper golang structures.
 // Believe me, you shouldn't.
 
-func generateXML(vmName string, network networkModel, gui bool,
+func generateXML(vmName string, network networkModel, gui bool, sound bool,
 	vmNixPath, reginfo, img, sharedDir string) string {
 
 	devices := ""
 
 	if gui {
 		devices = guiDevices
+	}
+
+	if sound {
+		devices += soundDevices
 	}
 
 	qemuParams := qemuParamsDefault
@@ -50,26 +54,48 @@ var netDevices = `
 
 var guiDevices = `
     <!-- Graphical console -->
-    <graphics type='spice' autoport='yes'>
-      <listen type='address'/>
-      <image compression='off'/>
+    <graphics type='spice'>
+      <listen type='socket' socket='/tmp/spice.sock'/>
+      <gl enable='yes' rendernode='/dev/dri/renderD128'/>
     </graphics>
     <!-- Guest additionals support -->
     <channel type='spicevmc'>
       <target type='virtio' name='com.redhat.spice.0'/>
     </channel>
     <video>
-      <model type='qxl' ram='524288' vram='524288' vgamem='262144' heads='1' primary='yes'/>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+      <model type='virtio' heads='1' primary='yes'>
+        <acceleration accel3d='yes'/>
+      </model>
     </video>
 `
+
+var soundDevices = `
+    <sound model='ich9'>
+      <codec type='duplex'/>
+    </sound>
+`
+
+// <!-- Graphical console -->
+// <graphics type='spice' autoport='yes'>
+//   <listen type='none'/>
+//   <gl enable='yes' rendernode='/dev/dri/renderD128'/>
+// </graphics>
+// <!-- Guest additionals support -->
+// <channel type='spicevmc'>
+//   <target type='virtio' name='com.redhat.spice.0'/>
+// </channel>
+// <video>
+//   <model type='virtio' heads='1' primary='yes'>
+//     <acceleration accel3d='yes'/>
+//   </model>
+// </video>
 
 var xmlTmpl = `
 <domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
   <name>%s</name>
-  <memory unit='GiB'>2</memory>
-  <currentMemory unit='GiB'>1</currentMemory>
-  <vcpu>4</vcpu>
+  <memory unit='GiB'>8</memory>
+  <currentMemory unit='GiB'>4</currentMemory>
+  <vcpu>8</vcpu>
   <os>
     <type arch='x86_64'>hvm</type>
     <kernel>%s/kernel</kernel>

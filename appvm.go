@@ -181,14 +181,14 @@ func isRunning(l *libvirt.Libvirt, name string) bool {
 
 func generateAppVM(l *libvirt.Libvirt,
 	nixName, vmName, appvmPath, sharedDir string,
-	verbose bool, network networkModel, gui bool) (qcow2 string, err error) {
+	verbose bool, network networkModel, gui bool, sound bool) (qcow2 string, err error) {
 
 	realpath, reginfo, qcow2, err := generateVM(appvmPath, nixName, verbose)
 	if err != nil {
 		return
 	}
 
-	xml := generateXML(vmName, network, gui, realpath, reginfo, qcow2, sharedDir)
+	xml := generateXML(vmName, network, gui, sound, realpath, reginfo, qcow2, sharedDir)
 	_, err = l.DomainCreateXML(xml, libvirt.DomainStartValidate)
 	return
 }
@@ -274,8 +274,9 @@ func start(l *libvirt.Libvirt, name string, verbose bool, network networkModel,
 			go stupidProgressBar()
 		}
 
+		sound := gui
 		qcow2, err := generateAppVM(l, name, vmName, appvmPath, sharedDir,
-			verbose, network, gui)
+			verbose, network, gui, sound)
 		defer os.Remove(qcow2)
 		if err != nil {
 			log.Fatal(err)
