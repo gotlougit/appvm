@@ -24,46 +24,25 @@ let
   '';
 in {
   imports = [
-    <nixpkgs/nixos/modules/virtualisation/qemu-vm.nix>
-    <nix/base.nix>
+    ./base.nix
   ];
 
   services.xserver.displayManager.sessionCommands = "${appRunner}/bin/app &";
 }
 `
 
-func isPackageExists(channel, name string) bool {
-	return nil == exec.Command("nix-build", "<"+channel+">", "-A", name).Run()
+func isPackageExists(name string) bool {
+	cmd := exec.Command("nix", "eval", "--impure", "--expr", fmt.Sprintf("(import <nixpkgs> {}).%s or null", name))
+	return cmd.Run() == nil
 }
 
 func nixPath(name string) (path string, err error) {
-	command := exec.Command("nix", "path-info", name)
+	command := exec.Command("nix", "eval", "--impure", "--raw", "--expr", fmt.Sprintf("(import <nixpkgs> {}).%s", name))
 	bytes, err := command.Output()
 	if err != nil {
 		return
 	}
 	path = string(bytes)
-	return
-}
-
-func guessChannel() (channel string, err error) {
-	command := exec.Command("nix-channel", "--list")
-	bytes, err := command.Output()
-	if err != nil {
-		return
-	}
-	channels := strings.Split(string(bytes), "\n")
-	for _, line := range channels {
-		fields := strings.Fields(line)
-		if len(fields) == 2 {
-			if strings.Contains(fields[1], "nixos.org/channels") {
-				channel = fields[0]
-				return
-			}
-		}
-	}
-
-	err = errors.New("No channel found")
 	return
 }
 
@@ -77,37 +56,20 @@ func filterDotfiles(files []os.FileInfo) (notHiddenFiles []os.FileInfo) {
 }
 
 func generate(pkg, bin, vmname string, build bool) (err error) {
-	// TODO refactor
-	var name, channel string
+	var name string
 
-	if strings.Contains(pkg, ".") {
-		channel = strings.Split(pkg, ".")[0]
-		name = strings.Join(strings.Split(pkg, ".")[1:], ".")
-	} else {
-		log.Println("Package name does not contains channel")
-		log.Println("Trying to guess")
+	// Remove all channel-related logic
+	name = pkg
+	log.Println("Using package:", name)
 
-		channel, err = guessChannel()
-		if err != nil {
-			log.Println("Cannot guess channel")
-			log.Println("Check nix-channel --list")
-			log.Println("Will try <nixpkgs>")
-			channel = "nixpkgs"
-			err = nil
-		}
-
-		name = pkg
-		log.Println("Use", channel+"."+pkg)
-	}
-
-	if !isPackageExists(channel, name) {
+	if !isPackageExists(name) {
 		s := "Package " + name + " does not exists"
 		err = errors.New(s)
 		log.Println(s)
 		return
 	}
 
-	path, err := nixPath(channel + "." + name)
+	path, err := nixPath(name)
 	if err != nil {
 		log.Println("Cannot find nix path")
 		return
@@ -172,10 +134,13 @@ func generate(pkg, bin, vmname string, build bool) (err error) {
 	}
 
 	var appFilename string
+	var finalAppName string
 	if vmname != "" {
-		appFilename = configDir + "/nix/" + vmname + ".nix"
+		appFilename = configDir + "/" + vmname + ".nix"
+		finalAppName = vmname
 	} else {
-		appFilename = configDir + "/nix/" + name + ".nix"
+		appFilename = configDir + "/" + name + ".nix"
+		finalAppName = name
 	}
 
 	appNixConfig := fmt.Sprintf(template, name, bin)
@@ -186,20 +151,66 @@ func generate(pkg, bin, vmname string, build bool) (err error) {
 		return
 	}
 
+	// Update flake.nix for this app
+	err = updateFlakeForApp(configDir, finalAppName)
+	if err != nil {
+		log.Println("Failed to update flake.nix:", err)
+		return
+	}
+
 	fmt.Print(appNixConfig + "\n")
 	log.Println("Configuration file is saved to", appFilename)
 
 	if build {
-		if vmname != "" {
-			_, _, _, err = generateVM(configDir, vmname, true)
-		} else {
-			_, _, _, err = generateVM(configDir, name, true)
-		}
-
+		_, _, _, err = generateVM(configDir, finalAppName, true)
 		if err != nil {
 			return
 		}
 	}
 
 	return
+}
+func updateFlakeForApp(appvmPath, appName string) error {
+	flakeContent := `{
+  description = "AppVM Flake";
+
+  inputs = { nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable"; };
+
+  outputs = { self, nixpkgs }:
+    let
+      system = "x86_64-linux";
+
+      # Function to create a NixOS configuration for an app
+      makeAppVM = name:
+        nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            ./${name}.nix
+            "${nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
+            {
+              virtualisation.graphics = false;
+              virtualisation.qemu.options = [ "-enable-kvm" "-m 8192" ];
+            }
+          ];
+        };
+      # Get all .nix files except base.nix and local.nix
+      nixFiles = builtins.filter (name:
+        builtins.match ".*.nix$" name != null && name != "base.nix" && name
+        != "local.nix") (builtins.attrNames (builtins.readDir ./.));
+
+      # Convert filenames to app names (remove .nix extension)
+      appNames =
+        map (name: builtins.substring 0 (builtins.stringLength name - 4) name)
+        nixFiles;
+
+    in {
+      nixosConfigurations = builtins.listToAttrs (map (name: {
+        name = name;
+        value = makeAppVM name;
+      }) appNames);
+    };
+}
+`
+
+	return ioutil.WriteFile(appvmPath+"/flake.nix", []byte(flakeContent), 0644)
 }

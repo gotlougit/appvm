@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
@@ -93,8 +92,28 @@ func copyFile(from, to string) (err error) {
 }
 
 func prepareTemplates(appvmPath string) (err error) {
-	if _, err = os.Stat(appvmPath + "/nix/local.nix"); os.IsNotExist(err) {
-		err = ioutil.WriteFile(configDir+"/nix/local.nix", local_nix_template, 0644)
+	// Create flake.nix if it doesn't exist
+	if _, err = os.Stat(appvmPath + "/flake.nix"); os.IsNotExist(err) {
+		flakeContent := `{
+  description = "AppVM Flake";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  };
+
+  outputs = { self, nixpkgs }: {
+    nixosConfigurations = {};
+  };
+}
+`
+		err = ioutil.WriteFile(appvmPath+"/flake.nix", []byte(flakeContent), 0644)
+		if err != nil {
+			return
+		}
+	}
+
+	if _, err = os.Stat(appvmPath + "/local.nix"); os.IsNotExist(err) {
+		err = ioutil.WriteFile(appvmPath+"/local.nix", local_nix_template, 0644)
 		if err != nil {
 			return
 		}
@@ -115,9 +134,26 @@ func streamStdOutErr(command *cmd.Cmd) {
 }
 
 func generateVM(path, name string, verbose bool) (realpath, reginfo, qcow2 string, err error) {
+	// Change to app-specific flake directory
+	oldDir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	defer os.Chdir(oldDir)
+
+	// appFlakeDir := path + "/" + name
+	// err = os.Chdir(appFlakeDir)
+	// if err != nil {
+	// 	return
+	// }
+	err = os.Chdir(path)
+	if err != nil {
+		return
+	}
+
 	command := cmd.NewCmdOptions(cmd.Options{Buffered: false, Streaming: true},
-		"nix-build", "<nixpkgs/nixos>", "-A", "config.system.build.vm",
-		"-I", "nixos-config="+path+"/nix/"+name+".nix", "-I", path)
+		"nix", "build", "--impure", "--no-link", "--print-out-paths",
+		".#nixosConfigurations."+name+".config.system.build.vm")
 
 	if verbose {
 		go streamStdOutErr(command)
@@ -136,18 +172,22 @@ func generateVM(path, name string, verbose bool) (realpath, reginfo, qcow2 strin
 		return
 	}
 
-	realpath, err = filepath.EvalSymlinks("result/system")
-	if err != nil {
+	if len(status.Stdout) == 0 {
+		err = errors.New("no output from nix build")
 		return
 	}
 
-	matches, err := filepath.Glob("result/bin/run-*-vm")
+	realpath = strings.TrimSpace(status.Stdout[0])
+
+	// Find the run script
+	matches, err := filepath.Glob(realpath + "/bin/run-*-vm")
 	if err != nil || len(matches) != 1 {
+		err = errors.New("could not find VM run script")
 		return
 	}
 
 	bytes, err := ioutil.ReadFile(matches[0])
-	if err != nil || len(matches) != 1 {
+	if err != nil {
 		return
 	}
 
@@ -158,8 +198,6 @@ func generateVM(path, name string, verbose bool) (realpath, reginfo, qcow2 strin
 	}
 
 	reginfo = string(match[0])
-
-	syscall.Unlink("result")
 
 	tmpraw := os.Getenv("HOME") + "/appvm/." + name + ".tmp.raw"
 	qcow2 = os.Getenv("HOME") + "/appvm/." + name + ".fake.qcow2"
@@ -214,7 +252,7 @@ func fileExists(filename string) bool {
 }
 
 func isAppvmConfigurationExists(appvmPath, name string) bool {
-	return fileExists(appvmPath + "/nix/" + name + ".nix")
+	return fileExists(appvmPath + "/" + name + ".nix")
 }
 
 func start(l *libvirt.Libvirt, name string, verbose bool, network networkModel,
@@ -440,7 +478,7 @@ func parseNetworkModel(flagOffline bool, flagNetworking string) networkModel {
 	return networkQemu // qemu is the default network model
 }
 
-var configDir = os.Getenv("HOME") + "/.config/appvm/"
+var configDir = os.Getenv("HOME") + "/.config/appvm"
 var appvmHomesDir = os.Getenv("HOME") + "/appvm/"
 
 func main() {
@@ -448,14 +486,14 @@ func main() {
 
 	os.Mkdir(os.Getenv("HOME")+"/appvm", 0700)
 
-	os.MkdirAll(configDir+"/nix", 0700)
+	os.MkdirAll(configDir, 0700)
 
-	err := writeBuiltinApps(configDir + "/nix")
+	err := writeBuiltinApps(configDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = ioutil.WriteFile(configDir+"/nix/base.nix", baseNix(), 0644)
+	err = ioutil.WriteFile(configDir+"/base.nix", baseNix(), 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
