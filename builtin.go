@@ -11,12 +11,12 @@ type app struct {
 	Nix  []byte
 }
 
-var builtin_chromium_nix = app{
-	Name: "chromium",
+var builtin_brave_nix = app{
+	Name: "brave",
 	Nix: []byte(`
 {pkgs, ...}:
 let
-  application = "${pkgs.chromium}/bin/chromium";
+  application = "${pkgs.brave}/bin/brave";
   appRunner = pkgs.writeShellScriptBin "app" ''
     ARGS_FILE=/home/user/.args
     ARGS=$(cat $ARGS_FILE)
@@ -31,15 +31,6 @@ in {
     <nix/base.nix>
   ];
 
-  programs.chromium = {
-    enable = true;
-    extensions = [
-      "cjpalhdlnbpafiamejdnhcphjbkeiagm" # uBlock Origin
-      "gcbommkclmclpchllfjekcdonpmejbdp" # HTTPS Everywhere
-      "fihnjjcciajhdojfnbdddfaoknhalnja" # I don't care about cookies
-    ];
-  };
-
   services.xserver.displayManager.sessionCommands = "${appRunner}/bin/app &";
 }
 `),
@@ -47,7 +38,7 @@ in {
 
 func writeBuiltinApps(path string) (err error) {
 	for _, f := range []app{
-		builtin_chromium_nix,
+		builtin_brave_nix,
 	} {
 		err = ioutil.WriteFile(configDir+"/nix/"+f.Name+".nix", f.Nix, 0644)
 		if err != nil {
