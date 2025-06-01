@@ -10,16 +10,19 @@ var base_nix = `
 {pkgs, ...}:
 {
   imports = [
-    ./local.nix
+    <nix/local.nix>
   ];
 
-  services.displayManager.autoLogin = {
-    enable = true;
-    user = "user";
-  };
   services.xserver = {
     enable = true;
     desktopManager.xterm.enable = false;
+    displayManager = {
+      lightdm.enable = true;
+      autoLogin = {
+        enable = true;
+        user = "user";
+      };
+    };
     windowManager.xmonad.enable = true;
   };
 

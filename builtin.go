@@ -27,7 +27,8 @@ let
   '';
 in {
   imports = [
-    ./base.nix
+    <nixpkgs/nixos/modules/virtualisation/qemu-vm.nix>
+    <nix/base.nix>
   ];
 
   services.xserver.displayManager.sessionCommands = "${appRunner}/bin/app &";
@@ -39,7 +40,7 @@ func writeBuiltinApps(path string) (err error) {
 	for _, f := range []app{
 		builtin_brave_nix,
 	} {
-		err = ioutil.WriteFile(configDir+"/"+f.Name+".nix", f.Nix, 0644)
+		err = ioutil.WriteFile(configDir+"/nix/"+f.Name+".nix", f.Nix, 0644)
 		if err != nil {
 			return
 		}
